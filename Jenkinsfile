@@ -89,8 +89,10 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('SonarQube') {
+                    // Full plugin coordinates required — the 'sonar:' prefix shorthand
+                    // was retired. Version pinned to latest stable (May 2026).
                     bat """
-                        mvn sonar:sonar -B ^
+                        mvn org.sonarsource.scanner.maven:sonar-maven-plugin:5.7.0.6970:sonar -B ^
                             -Dsonar.projectKey=%SONAR_PROJECT_KEY% ^
                             -Dsonar.projectName="%SONAR_PROJECT_NAME%" ^
                             -Dsonar.java.source=17 ^
@@ -116,13 +118,13 @@ pipeline {
 
     post {
         always {
-            // target/sonar/report-task.txt — scanner metadata written by sonar-maven-plugin
-            // (working dir = target/sonar/). Contains projectKey, dashboardUrl, ceTaskId.
-            // This is not a vulnerability report. Full findings are in the SonarQube dashboard.
-            // A complete issue export requires the SonarQube Web API:
-            //   GET <sonarqube-host>/api/issues/search?projectKeys=Security-Shepherd&resolved=false
+            // report-task.txt — scanner metadata: projectKey, dashboardUrl, ceTaskId.
+            // sonar-maven-plugin 5.x writes to .scannerwork/ (the scanner working dir).
+            // Check the build log line '[INFO] Working dir:' to confirm the exact path
+            // for your environment; allowEmptyArchive:true prevents failure if absent.
+            // This is NOT a vulnerability report — full findings are in the SonarQube dashboard.
             archiveArtifacts(
-                artifacts: 'target/surefire-reports/**, target/sonar/report-task.txt, target/*.war',
+                artifacts: 'target/surefire-reports/**, .scannerwork/report-task.txt, target/*.war',
                 allowEmptyArchive: true,
                 fingerprint: true
             )
