@@ -1,6 +1,6 @@
 /**
  * Jenkins Declarative Pipeline — OWASP Security Shepherd
- * DevSecOps / SAST pipeline: compile → unit test → SonarQube SAST → Quality Gate → archive
+ * DevSecOps / SCA + SAST pipeline: compile → unit test → Dependency-Check SCA → SonarQube SAST → Quality Gate → archive
  *
  * Prerequisites (configure in Jenkins before running):
  *   - JDK installation named "JDK-17"      → Manage Jenkins → Tools → JDK
@@ -74,7 +74,25 @@ pipeline {
             }
         }
 
-        // Static analysis via SonarQube Maven scanner.
+        // Software Composition Analysis (SCA) — checks third-party dependencies for known CVEs.
+        // Uses the Jenkins OWASP Dependency-Check plugin with the OWASP-DC tool installation.
+        // NVD API key is injected from Jenkins credentials (NVD_API_KEY) — never hardcoded here.
+        // Reports are written to the workspace root:
+        //   dependency-check-report.xml  (consumed by dependencyCheckPublisher)
+        //   dependency-check-report.html (human-readable; archived as a build artifact)
+        // First integration: reporting-only baseline. No failure thresholds are applied yet.
+        // Vulnerability thresholds (--failOnCVSS / publisher rules) will be added after
+        // reviewing the baseline scan results.
+        stage('OWASP Dependency-Check') {
+            steps {
+                dependencyCheck additionalArguments: '--project "Security Shepherd" --format XML --format HTML',
+                                nvdCredentialsId: 'NVD_API_KEY',
+                                odcInstallation: 'OWASP-DC'
+                dependencyCheckPublisher pattern: 'dependency-check-report.xml'
+            }
+        }
+
+        // Static application security testing (SAST) via SonarQube Maven scanner.
         // withSonarQubeEnv injects SONAR_HOST_URL and the auth token from the Jenkins-managed
         // SonarQube server credential — no token appears in this file.
         // 'SonarQube' must match the server name in Manage Jenkins → System → SonarQube servers.
@@ -118,13 +136,16 @@ pipeline {
 
     post {
         always {
-            // report-task.txt — scanner metadata: projectKey, dashboardUrl, ceTaskId.
-            // sonar-maven-plugin 5.x writes to .scannerwork/ (the scanner working dir).
-            // Check the build log line '[INFO] Working dir:' to confirm the exact path
-            // for your environment; allowEmptyArchive:true prevents failure if absent.
-            // This is NOT a vulnerability report — full findings are in the SonarQube dashboard.
+            // Archived artifacts:
+            //   target/surefire-reports/**           — JUnit unit-test results
+            //   dependency-check-report.xml          — DC SCA machine-readable report (used by publisher)
+            //   dependency-check-report.html         — DC SCA human-readable report
+            //   .scannerwork/report-task.txt         — SonarQube scanner metadata (ceTaskId, dashboardUrl)
+            //                                          sonar-maven-plugin 5.x writes here; check
+            //                                          '[INFO] Working dir:' in the build log to confirm
+            //   target/*.war                         — compiled application artefact
             archiveArtifacts(
-                artifacts: 'target/surefire-reports/**, .scannerwork/report-task.txt, target/*.war',
+                artifacts: 'target/surefire-reports/**, dependency-check-report.xml, dependency-check-report.html, .scannerwork/report-task.txt, target/*.war',
                 allowEmptyArchive: true,
                 fingerprint: true
             )
