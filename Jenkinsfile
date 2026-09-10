@@ -85,7 +85,7 @@ pipeline {
         // reviewing the baseline scan results.
         stage('OWASP Dependency-Check') {
             steps {
-                dependencyCheck additionalArguments: '--project "Security Shepherd" --format XML --format HTML',
+                dependencyCheck additionalArguments: '--project "Security Shepherd" --format XML --format HTML --data "%JENKINS_HOME%\\dependency-check-data" --noupdate',
                                 nvdCredentialsId: 'NVD_API_KEY',
                                 odcInstallation: 'OWASP-DC'
                 dependencyCheckPublisher pattern: 'dependency-check-report.xml'
