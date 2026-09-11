@@ -1162,7 +1162,7 @@ SecurityShepherd/
 
 # 42. Pipeline Stages
 
-The pipeline contains the following logical stages:
+The Jenkinsfile defines the following explicit pipeline stages:
 
 ```text
 1. Checkout
@@ -1171,10 +1171,14 @@ The pipeline contains the following logical stages:
 4. OWASP Dependency-Check
 5. SonarQube Analysis
 6. Quality Gate
-7. Post / Archive
 ```
 
-Dependency-Check report publishing is performed as part of the Dependency-Check stage.
+After all stages complete, Jenkins executes a `post {}` block (not a stage) that:
+
+- Publishes/archives test reports, Dependency-Check reports, and the WAR artifact
+- Logs the overall pipeline result (success / failure / unstable)
+
+Dependency-Check report publishing (`dependencyCheckPublisher`) is executed inside the Dependency-Check stage itself, not in the post block.
 
 ---
 
@@ -1865,7 +1869,390 @@ This demonstrates why the Quality Gate status must be interpreted separately fro
 
 ---
 
-# 68. Post-Build Actions
+# 68. OPTIONAL — CNES SonarQube Report Generation
+
+> **This section is OPTIONAL and describes a manual/local workflow only.**
+> **CNES Report is NOT part of the current Jenkinsfile or automated pipeline.**
+
+The current Jenkins pipeline automatically produces:
+
+- Dependency-Check XML and HTML reports (archived as Jenkins build artifacts)
+- SonarQube SAST results (viewed in the SonarQube dashboard)
+- JUnit test results
+- Application WAR artifact
+
+SonarQube analysis results are primarily viewed through the SonarQube web dashboard at:
+
+```text
+http://localhost:9000
+```
+
+CNES Report is a separate command-line utility that can be run **after** a SonarQube analysis has already completed. It connects to an existing SonarQube project and exports the analysis results into standalone editable/exportable report files.
+
+CNES does not perform SAST itself. It is a reporting and export layer on top of existing SonarQube results.
+
+The relationship is:
+
+```text
+Jenkins
+    |
+    +--> SonarQube Analysis
+              |
+              v
+        SonarQube Dashboard       <-- primary results view
+              |
+              v
+        OPTIONAL CNES Report      <-- manual, separate step
+              |
+              v
+     Standalone report files
+```
+
+---
+
+# 69. CNES Report Tool
+
+CNES Report is an open-source SonarQube reporting utility available as a standalone JAR.
+
+The JAR used in this implementation is:
+
+```text
+sonar-cnes-report-5.0.4.jar
+```
+
+The directory containing the JAR (`<CNES_REPORT_DIR>`):
+
+```text
+<CNES_REPORT_DIR>\
+```
+
+> **Local/lab environment example:**
+> `V:\platform-tools\CNES-Report\`
+
+The directory structure at the time of testing:
+
+```text
+<CNES_REPORT_DIR>\
+|
++-- sonar-cnes-report-5.0.4.jar
++-- node-goat_reports\
++-- reports\
++-- Security-Shepherd-report\
+```
+
+Java must be installed and available in the PATH to run the JAR.
+
+---
+
+# 70. CNES Report Command-Line Options
+
+The available options can be verified by running:
+
+```powershell
+java -jar .\sonar-cnes-report-5.0.4.jar --help
+```
+
+The key options required for the Security Shepherd use case are:
+
+| Option | Description |
+|--------|-------------|
+| `-s, --server` | Complete URL of the SonarQube server |
+| `-p, --project` | SonarQube project key of the targeted project |
+| `-t, --token` | SonarQube authentication token |
+| `-o, --output` | Output directory for generated report files |
+| `-a, --author` | Name of the report author (optional) |
+| `-l, --language` | Report language: `en_US` or `fr_FR` (optional, default: `en_US`) |
+
+Additional options available but not used in this example:
+
+```text
+-b, --branch        Branch of the targeted project
+-c, --disable-conf  Disable export of quality configuration
+-d, --date          Date for the report (format: yyyy-MM-dd)
+-e, --disable-spreadsheet
+-f, --disable-csv
+-m, --disable-markdown
+-w, --disable-report
+-x, --template-spreadsheet
+-r, --template-report
+-n, --template-markdown
+-v, --version
+```
+
+---
+
+# 71. CNES Report — Security Shepherd Configuration
+
+The values used for the Security Shepherd project in the test environment:
+
+| Parameter | Generic Placeholder | Local/Lab Value Used |
+|-----------|--------------------|----------------------|
+| SonarQube server | `<SONARQUBE_URL>` | `http://localhost:9000` |
+| SonarQube project key | `Security-Shepherd` | `Security-Shepherd` |
+| SonarQube project name | `Security Shepherd` | `Security Shepherd` |
+| CNES JAR directory | `<CNES_REPORT_DIR>` | `V:\platform-tools\CNES-Report` |
+| CNES output directory | `<CNES_OUTPUT_DIR>` | `.\Security-Shepherd-report` |
+| Report author | `<REPORT_AUTHOR>` | `Vasanth` |
+| Report language | `en_US` | `en_US` |
+
+The project key `Security-Shepherd` must match exactly the project key configured in SonarQube.
+
+The SonarQube server must be running and the Security Shepherd project must already have a completed SonarQube analysis before generating the CNES report.
+
+---
+
+# 72. Create the CNES Output Directory
+
+Navigate to the directory where the CNES JAR is stored:
+
+```powershell
+cd <CNES_REPORT_DIR>
+```
+
+> **Environment-specific example from the test environment:**
+> The original implementation used:
+> `cd V:\platform-tools\CNES-Report`
+> Use any directory on your machine that contains the CNES JAR.
+
+Create the output directory:
+
+```powershell
+New-Item -ItemType Directory -Force .\Security-Shepherd-report
+```
+
+The `-Force` flag means this command is harmless if the directory already exists.
+
+---
+
+# 73. CNES Report Command
+
+Run the following PowerShell command from `<CNES_REPORT_DIR>` (the directory containing the CNES JAR):
+
+```powershell
+java -jar .\sonar-cnes-report-5.0.4.jar `
+  -s "<SONARQUBE_URL>" `
+  -p "Security-Shepherd" `
+  -t "<SONARQUBE_TOKEN>" `
+  -o ".\Security-Shepherd-report" `
+  -a "<REPORT_AUTHOR>" `
+  -l "en_US"
+```
+
+Equivalent one-line form:
+
+```powershell
+java -jar .\sonar-cnes-report-5.0.4.jar -s "<SONARQUBE_URL>" -p "Security-Shepherd" -t "<SONARQUBE_TOKEN>" -o ".\Security-Shepherd-report" -a "<REPORT_AUTHOR>" -l "en_US"
+```
+
+**Example from the test environment** (local lab, localhost SonarQube, author Vasanth):
+
+```powershell
+java -jar .\sonar-cnes-report-5.0.4.jar -s "http://localhost:9000" -p "Security-Shepherd" -t "<SONARQUBE_TOKEN>" -o ".\Security-Shepherd-report" -a "Vasanth" -l "en_US"
+```
+
+> **IMPORTANT:** Replace `<SONARQUBE_TOKEN>` with your actual SonarQube token when running the command locally.
+> **Never commit the real token to Git or include it in any documentation.**
+> Replace `<SONARQUBE_URL>` with the URL of your SonarQube server (e.g. `http://localhost:9000` for a local setup).
+> Replace `<REPORT_AUTHOR>` with your name or leave the `-a` flag out entirely.
+
+---
+
+# 74. CNES Command Arguments Explained
+
+```text
+-s "<SONARQUBE_URL>"
+    SonarQube server URL.
+    Local/lab example: http://localhost:9000
+    Replace with the correct URL if SonarQube is on a different host.
+
+-p "Security-Shepherd"
+    SonarQube project key.
+    Must match the project key configured in SonarQube exactly.
+    For this implementation: Security-Shepherd
+
+-t "<SONARQUBE_TOKEN>"
+    SonarQube authentication token.
+    The token must have permission to access the Security-Shepherd project.
+    Do NOT store the real token in source control.
+    Replace with your token at runtime only.
+
+-o ".\Security-Shepherd-report"
+    Output directory for generated report files.
+    This is a path relative to <CNES_REPORT_DIR>.
+    Environment-specific full path example: <CNES_REPORT_DIR>\Security-Shepherd-report
+
+-a "<REPORT_AUTHOR>"
+    Report author name.
+    Optional. Included in the generated report.
+    Example value used in test environment: Vasanth
+
+-l "en_US"
+    Report language.
+    Optional. Defaults to en_US.
+```
+
+---
+
+# 75. What the CNES Command Does
+
+When executed, CNES Report performs the following steps:
+
+```text
+1. SonarQube must be running at http://localhost:9000
+2. Security Shepherd must already have a completed SonarQube analysis
+3. CNES connects to the SonarQube server
+4. CNES authenticates using the supplied token
+5. CNES accesses the Security-Shepherd project by project key
+6. CNES exports the available SonarQube analysis results
+7. CNES generates report files in Security-Shepherd-report\
+```
+
+Architecture:
+
+```text
+SonarQube
+    |
+    | Security-Shepherd project
+    |
+    v
+CNES Report JAR
+    |
+    v
+Security-Shepherd-report\
+    |
+    +--> generated report files
+```
+
+CNES is a reporting and export utility. It reads existing SonarQube results and produces standalone output files. It does not perform any analysis itself.
+
+---
+
+# 76. CNES Output Location
+
+The CNES JAR is run from `<CNES_REPORT_DIR>` (the directory where the JAR is stored).
+
+The output option used is:
+
+```text
+-o ".\Security-Shepherd-report"
+```
+
+This places the generated files in a subdirectory relative to `<CNES_REPORT_DIR>`:
+
+```text
+<CNES_OUTPUT_DIR>
+    |
+    +--> generated report files
+```
+
+> **Environment-specific example from the test environment:**
+> The JAR was run from `V:\platform-tools\CNES-Report`
+> The output was placed in `V:\platform-tools\CNES-Report\Security-Shepherd-report\`
+> For your setup, choose any suitable directory.
+
+CNES can generate multiple output formats. The CNES help output indicates that report generation can include:
+
+```text
+- Report (document format)
+- Spreadsheet
+- CSV
+- Markdown
+- Quality configuration export
+```
+
+Check the generated output directory after the command completes to see the files that were produced.
+
+---
+
+# 77. CNES Is NOT Part of the Jenkins Pipeline
+
+To be explicit:
+
+```text
+CNES Report is NOT configured in the current Jenkinsfile.
+```
+
+The Jenkinsfile currently generates and archives:
+
+```text
+- Dependency-Check XML report
+- Dependency-Check HTML report
+- JUnit Surefire test reports
+- WAR artifact
+```
+
+SonarQube analysis results are sent to the SonarQube server and are viewed through the SonarQube web dashboard.
+
+CNES is currently a separate, manual step run locally after SonarQube analysis.
+
+The complete current flow is:
+
+```text
+Jenkins
+    |
+    +--> Dependency-Check
+    |       |
+    |       +--> XML report (Jenkins artifact)
+    |       +--> HTML report (Jenkins artifact)
+    |
+    +--> SonarQube
+            |
+            +--> SonarQube Dashboard    <-- view SAST results here
+                    |
+                    +--> OPTIONAL CNES Report   <-- manual, local step
+                            |
+                            +--> Standalone exported reports
+```
+
+---
+
+# 78. CNES Security Warning
+
+The CNES command requires a SonarQube authentication token.
+
+Never:
+
+```text
+- commit the token to Git
+- put the real token in SECURITY_CI_CD.md
+- put the real token in Jenkinsfile
+- share the token publicly
+- store the token in shell scripts committed to the repository
+```
+
+Always use a placeholder such as:
+
+```text
+<SONARQUBE_TOKEN>
+```
+
+in documentation. Supply the real token only at runtime, locally.
+
+---
+
+# 79. CNES Local/Lab Configuration Note
+
+The SonarQube URL `http://localhost:9000` is the **local/lab** SonarQube URL used in this implementation.
+
+For a different machine or production deployment, replace it with the appropriate SonarQube server URL.
+
+The `<CNES_REPORT_DIR>` and `<CNES_OUTPUT_DIR>` placeholders in the commands represent directories that are specific to each user's machine:
+
+```text
+<CNES_REPORT_DIR>
+    The directory where sonar-cnes-report-5.0.4.jar is stored.
+    Environment-specific example: V:\platform-tools\CNES-Report
+
+<CNES_OUTPUT_DIR>
+    The directory where CNES will write report files.
+    Environment-specific example: V:\platform-tools\CNES-Report\Security-Shepherd-report
+```
+
+For a different environment, choose any suitable directories.
+
+---
+
+# 80. Post-Build Actions
 
 The pipeline archives reports using:
 
@@ -1885,7 +2272,7 @@ target/*.war
 
 ---
 
-# 69. Archived Test Reports
+# 81. Archived Test Reports
 
 Jenkins archives:
 
@@ -1897,7 +2284,7 @@ These files contain the JUnit/Surefire test results.
 
 ---
 
-# 70. Archived Dependency-Check Reports
+# 82. Archived Dependency-Check Reports
 
 Jenkins archives:
 
@@ -1912,7 +2299,7 @@ The XML file is useful for Jenkins report processing.
 
 ---
 
-# 71. Archived WAR
+# 83. Archived WAR
 
 The pipeline also archives:
 
@@ -1924,7 +2311,7 @@ This allows the generated application WAR to be retained with the Jenkins build.
 
 ---
 
-# 72. Scanner Report Task File
+# 84. Scanner Report Task File
 
 The current archive configuration also references:
 
@@ -1946,7 +2333,7 @@ This archive entry is therefore non-critical.
 
 ---
 
-# 73. Build Retention
+# 85. Build Retention
 
 The pipeline retains:
 
@@ -1971,7 +2358,7 @@ buildDiscarder(logRotator(
 
 ---
 
-# 74. Final Pipeline Flow
+# 86. Final Pipeline Flow
 
 The complete Jenkins execution is:
 
@@ -2018,7 +2405,7 @@ Pipeline Result
 
 ---
 
-# 75. Successful Jenkins Build
+# 87. Successful Jenkins Build
 
 The complete pipeline was successfully executed.
 
@@ -2043,7 +2430,7 @@ SUCCESS
 
 ---
 
-# 76. Jenkins SCA Report Results
+# 88. Jenkins SCA Report Results
 
 The Jenkins-generated Dependency-Check HTML report used during validation reported:
 
@@ -2086,7 +2473,7 @@ The report was successfully generated and published by Jenkins.
 
 ---
 
-# 77. Dependency-Check NVD Status
+# 89. Dependency-Check NVD Status
 
 The report contained NVD information indicating that the NVD data had been checked on:
 
@@ -2104,7 +2491,7 @@ The exact values will naturally change as the vulnerability database is updated.
 
 ---
 
-# 78. Dependency-Check Network Warning
+# 90. Dependency-Check Network Warning
 
 During the first Jenkins SCA execution, Dependency-Check attempted to update vulnerability information from external sources.
 
@@ -2127,7 +2514,7 @@ Dependency-Check subsequently continued using locally available/cached data and 
 
 ---
 
-# 79. Important Interpretation of the SCA Warning
+# 91. Important Interpretation of the SCA Warning
 
 The successful generation of a report does not mean every external analyzer was fully available.
 
@@ -2170,7 +2557,7 @@ This should be considered when interpreting the results.
 
 ---
 
-# 80. Dependency-Check Local vs Jenkins Execution
+# 92. Dependency-Check Local vs Jenkins Execution
 
 A locally configured Dependency-Check environment may produce results faster if its vulnerability database is already fully populated.
 
@@ -2197,7 +2584,7 @@ This is expected.
 
 ---
 
-# 81. Recommended Improvement for Dependency-Check
+# 93. Recommended Improvement for Dependency-Check
 
 For a more stable CI environment, maintain a persistent Dependency-Check data directory.
 
@@ -2220,7 +2607,7 @@ The exact implementation depends on the Jenkins deployment architecture.
 
 ---
 
-# 82. Recommended Production SCA Architecture
+# 94. Recommended Production SCA Architecture
 
 For a larger environment, use:
 
@@ -2246,7 +2633,7 @@ This reduces unnecessary repeated downloads.
 
 ---
 
-# 83. Why Suppressions Were Not Added
+# 95. Why Suppressions Were Not Added
 
 The current implementation reports:
 
@@ -2270,7 +2657,7 @@ Suppressions should not be used simply to make a security report look better.
 
 ---
 
-# 84. Why Severity Thresholds Were Not Added Initially
+# 96. Why Severity Thresholds Were Not Added Initially
 
 No:
 
@@ -2310,7 +2697,7 @@ The exact policy should be determined by the project's security requirements.
 
 ---
 
-# 85. Recommended Future Security Gate
+# 97. Recommended Future Security Gate
 
 A mature pipeline could evolve into:
 
@@ -2335,7 +2722,7 @@ Instead of blocking on every historical vulnerability, a production team may cho
 
 ---
 
-# 86. Troubleshooting — SonarQube Not Running
+# 98. Troubleshooting — SonarQube Not Running
 
 If Jenkins reports that it cannot connect to SonarQube, verify that SonarQube is running.
 
@@ -2355,7 +2742,7 @@ http://localhost:9000
 
 ---
 
-# 87. Troubleshooting — SonarQube URL
+# 99. Troubleshooting — SonarQube URL
 
 Check:
 
@@ -2389,7 +2776,7 @@ withSonarQubeEnv('SonarQube')
 
 ---
 
-# 88. Troubleshooting — SonarQube Token
+# 100. Troubleshooting — SonarQube Token
 
 If authentication fails:
 
@@ -2408,7 +2795,7 @@ Never put the token directly into the Jenkinsfile.
 
 ---
 
-# 89. Troubleshooting — SonarQube Prefix Error
+# 101. Troubleshooting — SonarQube Prefix Error
 
 An earlier command:
 
@@ -2432,7 +2819,7 @@ Therefore the Jenkinsfile uses the explicit plugin coordinates.
 
 ---
 
-# 90. Troubleshooting — Quality Gate Waiting
+# 102. Troubleshooting — Quality Gate Waiting
 
 If Jenkins stays at:
 
@@ -2454,7 +2841,7 @@ In a production environment, `localhost` should generally not be used unless Jen
 
 ---
 
-# 91. Troubleshooting — Dependency-Check NVD Failure
+# 103. Troubleshooting — Dependency-Check NVD Failure
 
 If the Jenkins log shows:
 
@@ -2480,7 +2867,7 @@ NVD_API_KEY
 
 ---
 
-# 92. Troubleshooting — Dependency-Check External Sources
+# 104. Troubleshooting — Dependency-Check External Sources
 
 Dependency-Check can use multiple external data sources/analyzers.
 
@@ -2500,7 +2887,7 @@ However, the resulting report should be reviewed for warnings and analysis excep
 
 ---
 
-# 93. Troubleshooting — Dependency-Check Report Missing
+# 105. Troubleshooting — Dependency-Check Report Missing
 
 If Jenkins cannot find:
 
@@ -2529,7 +2916,7 @@ The configured scanner arguments include:
 
 ---
 
-# 94. Troubleshooting — Dependency-Check Installation
+# 106. Troubleshooting — Dependency-Check Installation
 
 If Jenkins cannot find the scanner:
 
@@ -2559,7 +2946,7 @@ The name is case-sensitive.
 
 ---
 
-# 95. Troubleshooting — NVD Credential
+# 107. Troubleshooting — NVD Credential
 
 If Dependency-Check cannot access NVD correctly:
 
@@ -2588,7 +2975,7 @@ Do not replace the credential ID with the actual secret.
 
 ---
 
-# 96. Troubleshooting — Maven Not Found
+# 108. Troubleshooting — Maven Not Found
 
 If Jenkins reports:
 
@@ -2624,7 +3011,7 @@ The tool name must match.
 
 ---
 
-# 97. Troubleshooting — Java Not Found
+# 109. Troubleshooting — Java Not Found
 
 If Jenkins reports Java-related errors:
 
@@ -2652,7 +3039,7 @@ jdk 'JDK-17'
 
 ---
 
-# 98. Troubleshooting — Windows Docker Build
+# 110. Troubleshooting — Windows Docker Build
 
 If the Docker Maven profile fails on Windows because of:
 
@@ -2672,7 +3059,7 @@ because Docker packaging is not necessary for SAST/SCA.
 
 ---
 
-# 99. Troubleshooting — Empty JUnit Results
+# 111. Troubleshooting — Empty JUnit Results
 
 The pipeline uses:
 
@@ -2700,7 +3087,7 @@ manually and verify the directory.
 
 ---
 
-# 100. Jenkins Build Failure Investigation
+# 112. Jenkins Build Failure Investigation
 
 When a build fails, inspect the Jenkins stage that failed.
 
@@ -2722,7 +3109,7 @@ The current pipeline does not configure Dependency-Check CVSS failure thresholds
 
 ---
 
-# 101. Understanding the Final Jenkins Result
+# 113. Understanding the Final Jenkins Result
 
 A successful Jenkins build means that all configured pipeline requirements completed successfully.
 
@@ -2752,7 +3139,7 @@ Security findings can still exist.
 
 ---
 
-# 102. Security Shepherd Is Intentionally Vulnerable
+# 114. Security Shepherd Is Intentionally Vulnerable
 
 Security Shepherd is specifically designed for security training.
 
@@ -2776,7 +3163,7 @@ In fact, the findings demonstrate that the security tools are analyzing the appl
 
 ---
 
-# 103. Example SonarQube Interpretation
+# 115. Example SonarQube Interpretation
 
 The analysis showed approximately:
 
@@ -2804,7 +3191,7 @@ It should not be interpreted as:
 
 ---
 
-# 104. Example SCA Interpretation
+# 116. Example SCA Interpretation
 
 The Dependency-Check report showed:
 
@@ -2831,7 +3218,7 @@ The findings should be reviewed individually based on:
 
 ---
 
-# 105. Security Report Lifecycle
+# 117. Security Report Lifecycle
 
 The intended lifecycle is:
 
@@ -2875,9 +3262,11 @@ This creates a continuous security feedback loop.
 
 ---
 
-# 106. What Was Actually Automated
+# 118. What Is Automated vs Manual
 
-The Jenkins pipeline automates:
+## Automated by Jenkins
+
+The following are fully automated by the Jenkins pipeline on every build:
 
 ### Build
 
@@ -2885,7 +3274,7 @@ The Jenkins pipeline automates:
 mvn clean package -B -DskipTests
 ```
 
-### Tests
+### Unit Tests
 
 ```text
 mvn test -B
@@ -2912,20 +3301,32 @@ waitForQualityGate
 ### Reporting
 
 ```text
-JUnit
-Dependency-Check Publisher
-SonarQube
+JUnit publisher
+Dependency-Check publisher
+SonarQube dashboard (via webhook)
 ```
 
-### Artifact retention
+### Artifact archiving
 
 ```text
-Jenkins archiveArtifacts
+Jenkins archiveArtifacts (post block)
 ```
+
+## Manual / Optional
+
+### CNES SonarQube Report
+
+CNES report generation is **NOT automated**.
+
+It is a separate, manual, local step that can be run after a SonarQube analysis is complete.
+
+CNES consumes existing SonarQube project results and generates standalone exportable report files. It does not perform any analysis itself.
+
+See sections 68–79 for the complete CNES setup and command.
 
 ---
 
-# 107. Secrets Management
+# 119. Secrets Management
 
 The pipeline follows the principle of keeping secrets outside source control.
 
@@ -2952,7 +3353,7 @@ to GitHub.
 
 ---
 
-# 108. Current Jenkins Configuration Summary
+# 120. Current Jenkins Configuration Summary
 
 The main Jenkins configuration is:
 
@@ -2974,7 +3375,7 @@ The main Jenkins configuration is:
 
 ---
 
-# 109. Current SonarQube Configuration Summary
+# 121. Current SonarQube Configuration Summary
 
 | Setting | Value |
 |---|---|
@@ -2990,7 +3391,7 @@ The main Jenkins configuration is:
 
 ---
 
-# 110. Current Dependency-Check Configuration Summary
+# 122. Current Dependency-Check Configuration Summary
 
 | Setting | Value |
 |---|---|
@@ -3010,7 +3411,7 @@ The scanner-version difference should be verified before standardizing the envir
 
 ---
 
-# 111. Current Test Results
+# 123. Current Test Results
 
 The successful unit-test execution produced:
 
@@ -3029,7 +3430,7 @@ PASS
 
 ---
 
-# 112. Current SCA Results
+# 124. Current SCA Results
 
 The successful Jenkins-generated Dependency-Check report contained:
 
@@ -3051,7 +3452,7 @@ The report also contained a warning related to the unavailable Central Analyzer.
 
 ---
 
-# 113. Current SAST Results
+# 125. Current SAST Results
 
 The SonarQube analysis produced approximately:
 
@@ -3074,7 +3475,7 @@ Again, these findings are expected because Security Shepherd is intentionally vu
 
 ---
 
-# 114. What This Project Demonstrates
+# 126. What This Project Demonstrates
 
 This implementation demonstrates a DevSecOps pipeline where security checks are integrated into CI rather than performed only manually.
 
@@ -3106,7 +3507,7 @@ This allows security analysis to become part of the normal software development 
 
 ---
 
-# 115. Why Both SAST and SCA Are Used
+# 127. Why Both SAST and SCA Are Used
 
 Using only one security scanner leaves gaps.
 
@@ -3154,7 +3555,7 @@ Broader security coverage
 
 ---
 
-# 116. Why Jenkins Is Used
+# 128. Why Jenkins Is Used
 
 Jenkins acts as the automation/orchestration layer.
 
@@ -3202,7 +3603,7 @@ The process becomes repeatable.
 
 ---
 
-# 117. Reproducing the Setup on Another Machine
+# 129. Reproducing the Setup on Another Machine
 
 To reproduce the setup:
 
@@ -3375,13 +3776,13 @@ Jenkins
 
 ---
 
-# 118. Production Considerations
+# 130. Production Considerations
 
 The current implementation is primarily a local/lab DevSecOps setup.
 
 Before using it as a production CI/CD security gate, consider the following improvements.
 
-## 118.1 Use a reachable SonarQube/Jenkins URL
+## 130.1 Use a reachable SonarQube/Jenkins URL
 
 Instead of:
 
@@ -3393,13 +3794,13 @@ use a properly reachable Jenkins endpoint.
 
 ---
 
-## 118.2 Persist Dependency-Check Data
+## 130.2 Persist Dependency-Check Data
 
 Use persistent storage for the Dependency-Check vulnerability database.
 
 ---
 
-## 118.3 Introduce Security Thresholds
+## 130.3 Introduce Security Thresholds
 
 After establishing a baseline, introduce policies such as:
 
@@ -3415,7 +3816,7 @@ Fail on newly introduced High/Critical vulnerabilities
 
 ---
 
-## 118.4 Manage False Positives Properly
+## 130.4 Manage False Positives Properly
 
 Use documented Dependency-Check suppressions only when justified.
 
@@ -3423,7 +3824,7 @@ Do not suppress findings merely to achieve a green build.
 
 ---
 
-## 118.5 Secure Jenkins
+## 130.5 Secure Jenkins
 
 Use:
 
@@ -3437,7 +3838,7 @@ Use:
 
 ---
 
-## 118.6 Secure SonarQube
+## 130.6 Secure SonarQube
 
 Use:
 
@@ -3449,7 +3850,7 @@ Use:
 
 ---
 
-# 119. Future Improvements
+# 131. Future Improvements
 
 Possible improvements include:
 
@@ -3472,7 +3873,7 @@ Possible improvements include:
 
 ---
 
-# 120. Recommended Mature DevSecOps Pipeline
+# 132. Recommended Mature DevSecOps Pipeline
 
 A future version can evolve into:
 
@@ -3520,7 +3921,7 @@ A future version can evolve into:
 
 ---
 
-# 121. Security Principles Followed
+# 133. Security Principles Followed
 
 This implementation follows several basic DevSecOps principles:
 
@@ -3556,7 +3957,7 @@ SonarQube can prevent further pipeline progression when the configured Quality G
 
 ---
 
-# 122. Important Limitations
+# 134. Important Limitations
 
 This setup should not be interpreted as a complete security solution.
 
@@ -3578,7 +3979,7 @@ Instead, it provides automated security checks as part of CI/CD.
 
 ---
 
-# 123. Final Result
+# 135. Final Result
 
 The completed Security Shepherd DevSecOps pipeline successfully integrates:
 
@@ -3614,7 +4015,7 @@ The final validated Jenkins execution completed successfully.
 
 ---
 
-# 124. Quick Reference
+# 136. Quick Reference
 
 ## Repository
 
@@ -3652,7 +4053,7 @@ JDK-17
 Maven-3.9
 ```
 
-## SonarQube
+## SonarQube Project Name
 
 ```text
 Security Shepherd
@@ -3672,6 +4073,14 @@ SonarQube
 
 ## SonarQube URL
 
+Generic (replace with your SonarQube server address):
+
+```text
+<SONARQUBE_URL>
+```
+
+Local/lab value used in this implementation:
+
 ```text
 http://localhost:9000
 ```
@@ -3682,13 +4091,23 @@ http://localhost:9000
 sonarqube-token
 ```
 
+(Credential identifier — not the actual token value)
+
 ## SonarQube Webhook
+
+Generic:
+
+```text
+<JENKINS_URL>/sonarqube-webhook/
+```
+
+Local/lab value used in this implementation:
 
 ```text
 http://localhost:8080/sonarqube-webhook/
 ```
 
-## Dependency-Check Installation
+## Dependency-Check Installation Name
 
 ```text
 OWASP-DC
@@ -3699,6 +4118,8 @@ OWASP-DC
 ```text
 NVD_API_KEY
 ```
+
+(Credential identifier — not the actual API key value)
 
 ## Dependency-Check Reports
 
@@ -3719,9 +4140,27 @@ target/surefire-reports/
 target/*.war
 ```
 
+## CNES Report (OPTIONAL — manual local step)
+
+```text
+CNES JAR:     sonar-cnes-report-5.0.4.jar
+CNES Server:  <SONARQUBE_URL>
+CNES Project: Security-Shepherd
+CNES Output:  <CNES_OUTPUT_DIR>
+```
+
+Local/lab values used in this implementation:
+
+```text
+CNES Server:  http://localhost:9000
+CNES Output:  <CNES_REPORT_DIR>\Security-Shepherd-report\
+```
+
+CNES is NOT part of the automated Jenkins pipeline. Run manually after a completed SonarQube analysis when a standalone exportable report is required.
+
 ---
 
-# 125. Conclusion
+# 137. Conclusion
 
 This implementation integrates security testing directly into the Security Shepherd CI pipeline.
 
