@@ -1,21 +1,18 @@
 /**
  * Jenkins Declarative Pipeline — OWASP Security Shepherd
- * DevSecOps / SCA + SAST pipeline: compile → unit test → Dependency-Check SCA → SonarQube SAST → Quality Gate → archive
+ * DevSecOps pipeline with SCA (OWASP Dependency-Check) and SAST (SonarQube).
  *
- * Prerequisites (configure in Jenkins before running):
- *   - JDK installation named "JDK-17"      → Manage Jenkins → Tools → JDK
- *   - Maven installation named "Maven-3.9"  → Manage Jenkins → Tools → Maven
- *   - SonarQube server named "SonarQube"    → Manage Jenkins → System → SonarQube servers
- *     (set Server URL + the stored auth token credential there — never here)
- *   - SonarQube webhook for Quality Gate    → SonarQube → Administration → Webhooks
- *     URL: http://<jenkins-host>:<port>/sonarqube-webhook/
+ * Configured Jenkins tools / prerequisites:
+ *   - JDK: 'JDK-17'
+ *   - Maven: 'Maven-3.9'
+ *   - Dependency-Check: 'OWASP-DC' with credential 'NVD_API_KEY'
+ *   - SonarQube Server: 'SonarQube' with webhook back to Jenkins
  */
 
 pipeline {
 
     agent any
 
-    // Tool names must match the installations configured in Jenkins → Manage Jenkins → Tools.
     tools {
         jdk   'JDK-17'
         maven 'Maven-3.9'
@@ -35,8 +32,7 @@ pipeline {
 
     stages {
 
-        // Jenkins performs the SCM checkout automatically (job is "Pipeline script from SCM").
-        // This stage only logs Git context for traceability.
+        // Log Git revision information for build traceability
         stage('Checkout') {
             steps {
                 echo "Branch : ${env.GIT_BRANCH}"
@@ -44,24 +40,14 @@ pipeline {
             }
         }
 
-        // Compile main and test sources. No -Pdocker: that profile runs a Linux shell script
-        // (docker/scripts/convert-sql-scripts.sh) to prepare Docker artefacts — it is not
-        // needed for compilation or SAST and cannot execute on Windows.
-        // -DskipTests skips Surefire execution but still compiles test sources, so the
-        // Unit Tests stage reuses those classes without recompiling from scratch.
-        // 'package' produces target/owaspSecurityShepherd.war; it does not reach
-        // the integration-test or verify phases, so Failsafe and Spotless remain inert.
+        // Package WAR and compile test classes without running tests
         stage('Build') {
             steps {
                 bat 'mvn clean package -B -DskipTests'
             }
         }
 
-        // Run Surefire unit tests (src/test/java). Integration tests (src/it/java) are not
-        // executed here — they require a live MariaDB/MongoDB stack and the native libargon2
-        // library. Failsafe's integration-test phase is not reached by 'mvn test', so no
-        // extra skip flag is needed.
-        // Note: pom.xml Surefire already sets -Duser.timezone=UTC in <argLine>.
+        // Execute unit tests and record JUnit results
         stage('Unit Tests') {
             steps {
                 bat 'mvn test -B'
@@ -74,15 +60,8 @@ pipeline {
             }
         }
 
-        // Software Composition Analysis (SCA) — checks third-party dependencies for known CVEs.
-        // Uses the Jenkins OWASP Dependency-Check plugin with the OWASP-DC tool installation.
-        // NVD API key is injected from Jenkins credentials (NVD_API_KEY) — never hardcoded here.
-        // Reports are written to the workspace root:
-        //   dependency-check-report.xml  (consumed by dependencyCheckPublisher)
-        //   dependency-check-report.html (human-readable; archived as a build artifact)
-        // First integration: reporting-only baseline. No failure thresholds are applied yet.
-        // Vulnerability thresholds (--failOnCVSS / publisher rules) will be added after
-        // reviewing the baseline scan results.
+        // OWASP Dependency-Check SCA — scan third-party dependencies for CVEs
+        // Uses persistent local data directory and cached NVD data; NVD API key provided via Jenkins credentials
         stage('OWASP Dependency-Check') {
             steps {
                 dependencyCheck additionalArguments: '--project "Security Shepherd" --format XML --format HTML --data "%JENKINS_HOME%\\dependency-check-data" --noupdate',
@@ -92,23 +71,10 @@ pipeline {
             }
         }
 
-        // Static application security testing (SAST) via SonarQube Maven scanner.
-        // withSonarQubeEnv injects SONAR_HOST_URL and the auth token from the Jenkins-managed
-        // SonarQube server credential — no token appears in this file.
-        // 'SonarQube' must match the server name in Manage Jenkins → System → SonarQube servers.
-        //
-        // Exclusions:
-        //   mobile/**                        — Android Gradle project, not part of Maven build
-        //   src/main/resources/database/**   — SQL schema files; SonarQube Community has no SQL
-        //                                      analyser, so including them adds noise only
-        //
-        // The intentionally vulnerable Java source under src/main/java/servlets/module/ is
-        // NOT excluded — detecting those vulnerabilities is the purpose of this SAST scan.
+        // SonarQube SAST analysis — server and authentication token are managed by Jenkins configuration
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('SonarQube') {
-                    // Full plugin coordinates required — the 'sonar:' prefix shorthand
-                    // was retired. Version pinned to latest stable (May 2026).
                     bat """
                         mvn org.sonarsource.scanner.maven:sonar-maven-plugin:5.7.0.6970:sonar -B ^
                             -Dsonar.projectKey=%SONAR_PROJECT_KEY% ^
@@ -122,9 +88,7 @@ pipeline {
             }
         }
 
-        // Wait for SonarQube to finish the analysis task and return the Quality Gate result.
-        // abortPipeline:true fails the build if the gate is not OK.
-        // Requires the SonarQube webhook configured above; without it this stage will timeout.
+        // Enforce SonarQube Quality Gate via webhook callback
         stage('Quality Gate') {
             steps {
                 timeout(time: 10, unit: 'MINUTES') {
@@ -136,14 +100,7 @@ pipeline {
 
     post {
         always {
-            // Archived artifacts:
-            //   target/surefire-reports/**           — JUnit unit-test results
-            //   dependency-check-report.xml          — DC SCA machine-readable report (used by publisher)
-            //   dependency-check-report.html         — DC SCA human-readable report
-            //   .scannerwork/report-task.txt         — SonarQube scanner metadata (ceTaskId, dashboardUrl)
-            //                                          sonar-maven-plugin 5.x writes here; check
-            //                                          '[INFO] Working dir:' in the build log to confirm
-            //   target/*.war                         — compiled application artefact
+            // Archive test results, SCA/SAST reports, and packaged WAR
             archiveArtifacts(
                 artifacts: 'target/surefire-reports/**, dependency-check-report.xml, dependency-check-report.html, .scannerwork/report-task.txt, target/*.war',
                 allowEmptyArchive: true,
