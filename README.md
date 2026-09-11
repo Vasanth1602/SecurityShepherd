@@ -4,6 +4,16 @@ The [OWASP Security Shepherd Project](http://bit.ly/owaspSecurityShepherd) is a 
 
 [![Build and Test](https://github.com/OWASP/SecurityShepherd/actions/workflows/test.yml/badge.svg)](https://github.com/OWASP/SecurityShepherd/actions/workflows/test.yml)  
 
+## Security CI/CD Integration
+
+This fork includes a Jenkins-based DevSecOps pipeline integrating OWASP Dependency-Check for Software Composition Analysis (SCA) and SonarQube for Static Application Security Testing (SAST).
+
+For the complete setup, configuration, Jenkins pipeline, SonarQube integration, Dependency-Check integration, troubleshooting, and reproduction instructions, see:
+
+[Security CI/CD Integration Guide](SECURITY_CI_CD.md)
+
+---
+
 # Where can I download Security Shepherd?
 
 ### Virtual Machine or Manual Setup
